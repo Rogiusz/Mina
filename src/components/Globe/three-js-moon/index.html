@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Lunar Landing Site Navigator — NASA Data Integration</title>
+    <style>
+            body { margin: 0; overflow: hidden; background-color: #000; font-family: monospace; }
+            #ui-overlay { 
+                position: absolute; top: 20px; left: 20px; color: #0ff; 
+                background: rgba(0,0,0,0.85); padding: 20px; border: 1px solid #0ff; 
+                z-index: 100; width: 340px; max-height: 90vh; overflow-y: auto;
+                box-shadow: 0 0 20px rgba(0,255,255,0.2);
+            }
+            h2 { font-size: 16px; margin: 0 0 15px 0; color: #fff; border-bottom: 1px solid #0ff; padding-bottom: 5px; letter-spacing: 1px; }
+            .section-title { font-size: 11px; color: #aaa; margin: 12px 0 5px 0; text-transform: uppercase; }
+            .layer-btn { 
+                background: #111; color: #0ff; border: 1px solid #0aa; margin-top: 4px; 
+                padding: 8px 10px; cursor: pointer; display: block; width: 100%; text-align: left;
+                font-family: monospace; font-size: 12px; transition: all 0.2s;
+            }
+            .layer-btn:hover { background: #033; color: #fff; border-color: #0ff; }
+            .layer-btn.active { background: #066; color: #fff; border-color: #0ff; font-weight: bold; }
+        
+            .control-group { margin-top: 12px; border-top: 1px dashed #333; padding-top: 10px; }
+            label { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 5px; color: #ccc; }
+            input[type="range"] { width: 100%; cursor: pointer; accent-color: #0ff; }
+            input[type="date"], input[type="time"], select { 
+                width: 100%; background: #001122; color: #0ff; border: 1px solid #0aa; 
+                padding: 4px; font-family: monospace; font-size: 11px;
+            }
+            button { 
+                background: #002233; color: #0ff; border: 1px solid #0aa; 
+                padding: 6px; cursor: pointer; font-family: monospace; font-size: 11px;
+            }
+            button:hover { background: #004466; }
+        
+            #legend { 
+                margin-top: 12px; padding: 10px; background: rgba(0,20,20,0.6); 
+                border: 1px solid #088; font-size: 11px; color: #ddd; line-height: 1.4;
+            }
+            #status { 
+                margin-top: 10px; padding: 6px; font-size: 10px; text-align: center; 
+                background: #002222; border: 1px solid #0aa; color: #0ff;
+            }
+            #info-panel {
+                margin-top: 10px; padding: 8px; background: rgba(0,20,20,0.6); 
+                border: 1px solid #0aa; font-size: 10px; color: #ddd; line-height: 1.5;
+            }
+            .grid-legend {
+                display: flex; height: 10px; margin: 5px 0; border: 1px solid #0aa;
+            }
+            .grid-legend div { flex: 1; font-size: 8px; text-align: center; line-height: 10px; }
+    </style>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "./"
+        }
+    }
+    </script>
+</head>
+<body>
+    <div id="ui-overlay">
+            <h2>LUNAR NAVIGATOR</h2>
+        
+            <div class="section-title">Visual Layers</div>
+                    <button class="layer-btn active" data-layer="optical">1. Optical Imagery (WAC)</button>
+                    <button class="layer-btn" data-layer="color">2. Color Shaded Relief</button>
+                    <button class="layer-btn" data-layer="elevation">3. Elevation (DEM)</button>
+                    <button class="layer-btn" data-layer="psr">4. Permanently Shadowed Regions</button>
+
+            <div class="control-group">
+                <label>Layer Opacity: <span id="opacity-val">100%</span></label>
+                <input type="range" id="opacity-slider" min="0" max="100" value="100">
+            </div>
+
+            <div class="section-title">SUN ANGLE GRID</div>
+                        <div class="control-group">
+                            <label><input type="checkbox" id="sun-grid-toggle" checked> Show Sun Angle Grid</label>
+                            <label><input type="checkbox" id="coord-grid-toggle"> Show Coordinate Grid</label>
+                            <label>Resolution:
+                                <select id="sun-grid-resolution">
+                                    <option value="10">Coarse (10°)</option>
+                                    <option value="5" selected>Medium (5°)</option>
+                                    <option value="2">Fine (2°)</option>
+                                </select>
+                            </label>
+                            <label>Date: <input type="date" id="sun-date"></label>
+                            <label>Time (UTC): <input type="time" id="sun-time" step="3600"></label>
+                            <button id="sun-update-btn" style="width:100%; margin-top:5px;">Update Sun Grid</button>
+                            <button id="sun-now-btn" style="width:100%; margin-top:3px;">Current Date/Time</button>
+                        </div>
+
+            <div class="control-group">
+                <label>Grid Opacity: <span id="sun-opacity-val">70%</span></label>
+                <input type="range" id="sun-opacity-slider" min="0" max="100" value="70">
+                <div class="grid-legend">
+                    <div style="background:#1a1a3a">Below</div>
+                    <div style="background:#3a0000">-15°</div>
+                    <div style="background:#662200">0°</div>
+                    <div style="background:#aa4400">15°</div>
+                    <div style="background:#dd8800">30°</div>
+                    <div style="background:#ffcc00">45°+</div>
+                </div>
+            </div>
+
+            <div id="info-panel">
+                <strong>Astronomical Info (UTC):</strong><br>
+                <div id="astro-info">
+                    Subsolar Lat: --<br>
+                    Subsolar Lon: --<br>
+                </div>
+                <hr style="border:0; border-top:1px solid #444; margin:5px 0;">
+                <strong>Selected Point:</strong><br>
+                <span id="point-info">Click on the Moon to select a location</span>
+            </div>
+
+            <div id="legend">
+                <strong>Legend:</strong><br>
+                <span id="legend-text">WAC Global Mosaic: High-resolution visible reflectance.</span>
+            </div>
+
+            <div id="status">Status: Ready</div>
+        </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/OrbitControls.js';
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x000000);
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 0, 3.5);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+                controls.minDistance = 1.1;   // Prevent clipping inside the Moon (radius = 1)
+                controls.maxDistance = 50;    // Limit zoom out
+                scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+        sun.position.set(10, 10, 10);
+        scene.add(sun);
+
+        const Moon = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 64), new THREE.MeshStandardMaterial({color: 0xffffff}));
+                scene.add(Moon);
+
+                // PSR overlay mesh (slightly larger to avoid z-fighting)
+                const psrOverlay = new THREE.Mesh(
+                    new THREE.SphereGeometry(1.002, 64, 64),
+                    new THREE.MeshBasicMaterial({
+                        transparent: true,
+                        opacity: 0.5,
+                        side: THREE.DoubleSide,
+                        depthWrite: false,
+                        blending: THREE.AdditiveBlending
+                    })
+                );
+                scene.add(psrOverlay);
+                psrOverlay.visible = false;
+
+                const textureLoader = new THREE.TextureLoader();
+                const NASA_SERVICES = 'https://trek.nasa.gov/moon/trekarcgis/rest/services';
+
+                const layers = {
+                    optical: {
+                        url: `${NASA_SERVICES}/LRO_WAC_Mosaic_Global_303ppd_v02/ImageServer/exportImage?bbox=-180,-90,180,90&bboxSR=4326&size=2048,1024&format=jpg&f=image`,
+                        legend: 'WAC Global Mosaic: Seamless full-sphere projection.'
+                    },
+                    color: {
+                        url: 'https://trek.nasa.gov/moon/trekarcgis/rest/services/LRO_LOLA_ClrShade_Global_256ppd_v06/ImageServer/exportImage?bbox=-180,-90,180,90&bboxSR=4326&size=2048,1024&format=jpg&f=image',
+                        legend: 'LOLA Color Shaded Relief: Hypsometric global elevation (256ppd).'
+                    },
+                    elevation: {
+                        url: `${NASA_SERVICES}/LRO_LOLA_DEM_Global_128ppd_v04/ImageServer/exportImage?bbox=-180,-90,180,90&bboxSR=4326&size=2048,1024&format=png&f=image`,
+                        legend: 'LOLA DEM: Global topography.'
+                    },
+                    psr: {
+                        url: 'https://trek.nasa.gov/moon/trekarcgis/rest/services/PSR_NP/MapServer/export?bbox=-180,-90,180,90&bboxSR=4326&size=2048,1024&format=png32&transparent=true&f=image',
+                        legend: 'Permanently Shadowed Regions: Areas never receiving direct sunlight, potential water ice locations.'
+                    }
+                };
+
+                function loadLayer(key) {
+                    const layer = layers[key];
+                    document.getElementById('status').innerText = 'Status: Fetching...';
+
+                    if (key === 'psr') {
+                        // PSR is an overlay, not a replacement
+                        textureLoader.load(layer.url,
+                            (tex) => {
+                                tex.colorSpace = THREE.SRGBColorSpace;
+                                tex.wrapS = THREE.RepeatWrapping;
+                                psrOverlay.material.map = tex;
+                                psrOverlay.visible = true;
+                                psrOverlay.material.needsUpdate = true;
+                                document.getElementById('legend-text').innerText = layer.legend;
+                                document.getElementById('status').innerText = 'Status: PSR overlay active';
+                            },
+                            undefined,
+                            (err) => {
+                                console.warn('PSR load failed:', err);
+                                document.getElementById('status').innerText = 'Status: PSR unavailable';
+                            }
+                        );
+                    } else {
+                        // Regular layers replace the base texture
+                        textureLoader.load(layer.url,
+                            (tex) => {
+                                tex.colorSpace = THREE.SRGBColorSpace;
+                                tex.wrapS = THREE.RepeatWrapping;
+                                Moon.material.map = tex;
+                                Moon.material.needsUpdate = true;
+                                psrOverlay.visible = false;
+                                document.getElementById('legend-text').innerText = layer.legend;
+                                document.getElementById('status').innerText = 'Status: ' + key + ' active';
+                            },
+                            undefined,
+                            (err) => {
+                                console.warn('NASA WMTS failed, using local fallback:', err);
+                                textureLoader.load('./moon-texture.jpg', (tex) => {
+                                    tex.colorSpace = THREE.SRGBColorSpace;
+                                    tex.wrapS = THREE.RepeatWrapping;
+                                    Moon.material.map = tex;
+                                    Moon.material.needsUpdate = true;
+                                    psrOverlay.visible = false;
+                                    document.getElementById('status').innerText = 'Status: ' + key + ' (Local Fallback)';
+                                });
+                            }
+                        );
+                    }
+                }
+
+        document.querySelectorAll('.layer-btn').forEach(btn => btn.onclick = (e) => {
+            document.querySelectorAll('.layer-btn').forEach(b => b.classList.remove('active'));
+            e.target.classList.add('active');
+            loadLayer(e.target.dataset.layer);
+        });
+
+        document.getElementById('opacity-slider').oninput = (e) => {
+            Moon.material.transparent = true;
+            Moon.material.opacity = e.target.value / 100;
+            document.getElementById('opacity-val').innerText = e.target.value + '%';
+        };
+
+                // Subsolar Marker
+                        const subsolarMarker = new THREE.Mesh(
+                            new THREE.SphereGeometry(0.025, 16, 16),
+                            new THREE.MeshBasicMaterial({ color: 0xffffff })
+                        );
+                        scene.add(subsolarMarker);
+                        subsolarMarker.visible = false;
+
+                        // Grid System
+                                const gridGroup = new THREE.Group();
+                                scene.add(gridGroup);
+
+                                // Coordinate Grid System
+                                const coordGridGroup = new THREE.Group();
+                                scene.add(coordGridGroup);
+
+                                function updateCoordGrid() {
+                                    coordGridGroup.clear();
+                                    const lines = [];
+
+                                    // Latitude lines
+                                    for (let lat = -80; lat <= 80; lat += 20) {
+                                        const points = [];
+                                        for (let lon = -180; lon < 180; lon += 1) {
+                                            const phi = (90 - lat) * (Math.PI / 180);
+                                            const theta = (lon + 180) * (Math.PI / 180);
+                                            points.push(new THREE.Vector3(
+                                                Math.sin(phi) * Math.cos(theta),
+                                                Math.cos(phi),
+                                                Math.sin(phi) * Math.sin(theta)
+                                            ));
+                                        }
+                                        const geo = new THREE.BufferGeometry().setFromPoints(points);
+                                        const mat = new THREE.LineBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.5 });
+                                        lines.push(new THREE.Line(geo, mat));
+                                    }
+
+                                    // Longitude lines
+                                    for (let lon = -180; lon < 180; lon += 30) {
+                                        const points = [];
+                                        for (let lat = -80; lat <= 80; lat += 1) {
+                                            const phi = (90 - lat) * (Math.PI / 180);
+                                            const theta = (lon + 180) * (Math.PI / 180);
+                                            points.push(new THREE.Vector3(
+                                                Math.sin(phi) * Math.cos(theta),
+                                                Math.cos(phi),
+                                                Math.sin(phi) * Math.sin(theta)
+                                            ));
+                                        }
+                                        const geo = new THREE.BufferGeometry().setFromPoints(points);
+                                        const mat = new THREE.LineBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.5 });
+                                        lines.push(new THREE.Line(geo, mat));
+                                    }
+
+                                    lines.forEach(l => {
+                                        l.scale.setScalar(1.005);
+                                        coordGridGroup.add(l);
+                                    });
+                                }
+
+                                updateCoordGrid();
+
+                                document.getElementById('coord-grid-toggle').onchange = (e) => {
+                                    coordGridGroup.visible = e.target.checked;
+                                };
+
+                                // Raycaster for point selection
+                                        const raycaster = new THREE.Raycaster();
+                                        const pointer = new THREE.Vector2();
+                                        const selectedPointMarker = new THREE.Mesh(
+                                            new THREE.SphereGeometry(0.03, 16, 16),
+                                            new THREE.MeshBasicMaterial({ color: 0x00ffff })
+                                        );
+                                        scene.add(selectedPointMarker);
+                                        selectedPointMarker.visible = false;
+
+                                        let selectedPoint = null; // Store selected point globally
+
+                                        function updateSelectedPointInfo() {
+                                                    if (!selectedPoint) return;
+
+                                                    const { lat, lon, point } = selectedPoint;
+                                                    const dateStr = document.getElementById('sun-date').value;
+                                                    const timeStr = document.getElementById('sun-time').value;
+                                                    const dt = new Date(`${dateStr}T${timeStr}:00Z`);
+                                                    const sunData = getSubsolarPoint(dt);
+                                                    const sunVec = sunData.vector;
+
+                                                    const phi = (90 - lat) * (Math.PI / 180);
+                                                    const theta = lon * (Math.PI / 180); // Fixed: removed +180 offset
+
+                                                    const snx = Math.sin(phi) * Math.cos(theta);
+                                                    const sny = Math.cos(phi);
+                                                    const snz = Math.sin(phi) * Math.sin(theta);
+
+                                                    const dot = snx * sunVec.x + sny * sunVec.z + snz * sunVec.y;
+                                                    const sunElev = Math.asin(Math.max(-1, Math.min(1, dot))) * (180 / Math.PI);
+                                                    const sunAzim = Math.atan2(sunVec.z, sunVec.x) * (180 / Math.PI);
+
+                                                    document.getElementById('point-info').innerHTML = `
+                                                        Lat: ${lat.toFixed(2)}°<br>
+                                                        Lon: ${lon.toFixed(2)}°<br>
+                                                        Sun Elevation: ${sunElev.toFixed(1)}°<br>
+                                                        Sun Azimuth: ${sunAzim.toFixed(1)}°<br>
+                                                        UTC: ${dt.toUTCString()}
+                                                    `;
+                                                }
+
+                                        function onPointerClick(event) {
+                                            const rect = renderer.domElement.getBoundingClientRect();
+                                            pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+                                            pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+                                            raycaster.setFromCamera(pointer, camera);
+                                            const intersects = raycaster.intersectObject(Moon, false);
+
+                                            if (intersects.length > 0) {
+                                                const point = intersects[0].point;
+                                                const x = point.x, y = point.y, z = point.z;
+                                                const lat = Math.asin(y / 1.0) * (180 / Math.PI);
+                                                const lon = Math.atan2(z, x) * (180 / Math.PI);
+
+                                                selectedPointMarker.position.copy(point);
+                                                selectedPointMarker.visible = true;
+
+                                                selectedPoint = { lat, lon, point };
+                                                updateSelectedPointInfo();
+                                            }
+                                        }
+
+                                        renderer.domElement.addEventListener('click', onPointerClick);
+
+                                function getSubsolarPoint(date) {
+            const JD = (date.getTime() / 86400000) + 2440587.5;
+            const T = (JD - 2451545.0) / 36525;
+            
+            // 1. Sun's Ecliptic Longitude (approximate)
+            const L0 = 280.46646 + 36000.76983 * T;
+            const M = 357.52911 + 35999.05029 * T;
+            const lambdaSun = (L0 + 1.914602 * Math.sin(M * Math.PI / 180) + 0.019993 * Math.sin(2 * M * Math.PI / 180)) % 360;
+            
+            // 2. Moon's Node and Rotation
+            const Omega = (125.04452 - 1934.136261 * T) % 360; // Node
+            const L_moon = (218.3164477 + 481267.8812307 * T) % 360; // Mean longitude
+            
+            // Moon's axial tilt relative to Ecliptic is 1.543°
+            const i = 1.543 * (Math.PI / 180);
+            const node = Omega * (Math.PI / 180);
+            
+            // Sun vector in Ecliptic
+            const ls = lambdaSun * (Math.PI / 180);
+            const sx = Math.cos(ls);
+            const sy = Math.sin(ls);
+            const sz = 0;
+
+            // Transform Sun vector to Moon Body-Fixed (IAU_MOON)
+            // This accounts for the 1.54 deg tilt and rotation
+            const rot = (L_moon - Omega + 180) * (Math.PI / 180);
+            
+            // Simplified transformation to Moon-fixed frame
+            const x1 = sx * Math.cos(node) + sy * Math.sin(node);
+            const y1 = -sx * Math.sin(node) + sy * Math.cos(node);
+            const z1 = sz;
+
+            const x2 = x1;
+            const y2 = y1 * Math.cos(i) + z1 * Math.sin(i);
+            const z2 = -y1 * Math.sin(i) + z1 * Math.cos(i);
+
+            const sunX = x2 * Math.cos(rot) + y2 * Math.sin(rot);
+            const sunY = -x2 * Math.sin(rot) + y2 * Math.cos(rot);
+            const sunZ = z2;
+
+            const subsolarLon = Math.atan2(sunY, sunX) * (180 / Math.PI);
+            const subsolarLat = Math.asin(sunZ) * (180 / Math.PI);
+
+            return { lat: subsolarLat, lon: subsolarLon, vector: new THREE.Vector3(sunX, sunY, sunZ) };
+        }
+
+        function updateSunGrid() {
+            const res = parseInt(document.getElementById('sun-grid-resolution').value);
+            const dateStr = document.getElementById('sun-date').value;
+            const timeStr = document.getElementById('sun-time').value;
+            const dt = new Date(`${dateStr}T${timeStr}:00Z`);
+
+            document.getElementById('status').innerText = 'Status: Calculating scientific ephemeris...';
+            gridGroup.clear();
+
+            const sunData = getSubsolarPoint(dt);
+            const subLat = sunData.lat;
+            const subLon = sunData.lon;
+            const sunVec = sunData.vector;
+
+            // Update UI
+            document.getElementById('astro-info').innerHTML = `
+                Subsolar Lat: ${subLat.toFixed(2)}°<br>
+                Subsolar Lon: ${subLon.toFixed(2)}°<br>
+                UTC: ${dt.toUTCString()}
+            `;
+
+            // Update Lighting
+            // Three.js Z is Moon's 90E, X is 0E. Our calculation matches this orientation.
+            sun.position.set(sunVec.x * 10, sunVec.z * 10, -sunVec.y * 10);
+
+            // Update Subsolar Marker
+            subsolarMarker.position.set(sunVec.x * 1.01, sunVec.z * 1.01, -sunVec.y * 1.01);
+            subsolarMarker.visible = document.getElementById('sun-grid-toggle').checked;
+
+            for (let lat = -90; lat <= 90; lat += res) {
+                            for (let lon = -180; lon < 180; lon += res) {
+                                const phi = (90 - lat) * (Math.PI / 180);
+                                const theta = lon * (Math.PI / 180); // Fixed: removed +180 offset
+
+                                // Surface normal in Three.js coordinates
+                                const snx = Math.sin(phi) * Math.cos(theta);
+                                const sny = Math.cos(phi);
+                                const snz = Math.sin(phi) * Math.sin(theta);
+
+                                // Dot product with sun vector (converted to Three.js axis system)
+                                // In our getSubsolarPoint: X is 0E, Y is 90E, Z is NP.
+                                // In Three.js: X is 0E, Y is NP, Z is 90E.
+                                const dot = snx * sunVec.x + sny * sunVec.z + snz * sunVec.y;
+                                const sunElev = Math.asin(Math.max(-1, Math.min(1, dot))) * (180 / Math.PI);
+
+                                if (sunElev > -10) { 
+                                    const color = sunElev < 0 ? 0x1a1a3a : 
+                                                 sunElev < 15 ? 0xaa4400 : 
+                                                 sunElev < 30 ? 0xdd8800 : 0xffcc00;
+
+                                    const point = new THREE.Mesh(
+                                        new THREE.SphereGeometry(0.015, 8, 8),
+                                        new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.7 })
+                                    );
+                                    // Map lat/lon to Three.js coordinates
+                                    point.position.set(snx * 1.005, sny * 1.005, snz * 1.005);
+                                    gridGroup.add(point);
+                                }
+                            }
+                        }
+            document.getElementById('status').innerText = 'Status: Grid updated with scientific ephemeris.';
+        }
+
+        document.getElementById('sun-now-btn').onclick = () => {
+                    const n = new Date();
+                    document.getElementById('sun-date').value = n.toISOString().split('T')[0];
+                    document.getElementById('sun-time').value = n.toISOString().split('T')[1].substring(0, 5);
+                    updateSunGrid();
+                    updateSelectedPointInfo();
+                };
+
+                document.getElementById('sun-update-btn').onclick = () => {
+                    updateSunGrid();
+                    updateSelectedPointInfo();
+                };
+        document.getElementById('sun-grid-toggle').onchange = (e) => gridGroup.visible = e.target.checked;
+        document.getElementById('sun-opacity-slider').oninput = (e) => gridGroup.traverse(o => { if(o.material) o.material.opacity = e.target.value / 100; });
+
+        // Initialize Date/Time
+                const now = new Date();
+                document.getElementById('sun-date').value = now.toISOString().split('T')[0];
+                document.getElementById('sun-time').value = now.toISOString().split('T')[1].substring(0, 5);
+
+                // Initial Grid
+                updateSunGrid();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
